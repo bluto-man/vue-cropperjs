@@ -4,3 +4,9 @@ steps:
     commands:
       - echo "Woodpecker 跑起来了"
       - uname -a
+      - date
+    when:
+      - event: [push, manual, pull_request]
+      - date
+    when:
+      - event: [push, pull_request]
