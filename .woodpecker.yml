@@ -7,6 +7,3 @@ steps:
       - date
     when:
       - event: [push, manual, pull_request]
-      - date
-    when:
-      - event: [push, pull_request]
