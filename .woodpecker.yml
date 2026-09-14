@@ -1,0 +1,6 @@
+steps:
+  - name: hello
+    image: alpine
+    commands:
+      - echo "Woodpecker 跑起来了"
+      - uname -a
