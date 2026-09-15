@@ -1,11 +1,7 @@
 steps:
-  - name: hello
+  - name: deploy
     image: alpine
     commands:
-      - echo "Woodpecker 跑起来了"
-      - uname -a
-      - date
-      - echo "手动触发测试"
-      - echo "push 触发测试"
+      - echo "手动部署"
     when:
-      - event: [manual, pull_request]
+      - event: manual
