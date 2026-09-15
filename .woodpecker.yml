@@ -4,4 +4,11 @@ steps:
     commands:
       - echo "-----开始构建---"
     when:
-      - event: [push, manual, pull_request]
+      - event: [push, manual, pull_request, tag]
+
+  - name: release
+    image: alpine
+    commands:
+      - echo "-----发布版本 ${CI_COMMIT_TAG}---"
+    when:
+      - event: tag
