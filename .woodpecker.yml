@@ -10,11 +10,9 @@
 # 而且 .dockerignore 排除了 dist，Dockerfile 也看不到 CI 的产物，想复用都复用不了。
 # 现在只留 docker-build 一个入口，好处是本地 docker build 和 CI 跑的是同一套逻辑。
 
-# 顶层 when 是整条流水线的开关，和 step 里的 when 不是一回事：
-#   写在这里     —— 事件不匹配时整条流水线标记为 skipped（灰色，不执行）
-#   只写在 step  —— 流水线照样创建，但没有一个 step 能跑，Woodpecker 判定
-#                   为无效配置，直接报 pipeline error
-# 之前普通 push 到 master 会红一条 error，就是因为只在 step 上写了 when。
+# 顶层 when 是整条流水线的开关，管的是「这条流水线该不该存在」；
+# 写在 step 里的 when 只管「这个 step 跑不跑」，流水线本身照样成立。
+# 想让普通 push 完全不进 Woodpecker，就得写在顶层。
 when:
   - event: [manual, tag]
 
@@ -29,25 +27,27 @@ steps:
   # dry_run 让插件跳过 login 和 push，只验证镜像能不能构建出来。
   # 所以这里不需要 docker_username / docker_password 两个 secret。
   # 以后真要发布时，去掉 dry_run 并补上 username/password 即可。
-  #
-  # 缓存：插件每次都起一个干净的 docker daemon，layer 缓存本来一次都命不中，
-  # 两个阶段的 yarn install 每次从零下载。cache_from / cache_to 把缓存落到
-  # 宿主机目录，只要 package.json / yarn.lock 没变，装依赖那两层就直接复用，
-  # 只有改了源码的那几层会重跑。mode=max 表示中间阶段的层也一起存。
-  # volumes 只对 trusted 仓库生效——本仓库因为 privileged 已经是 trusted 了。
   - name: docker-build
     image: woodpeckerci/plugin-docker-buildx
     privileged: true
-    volumes:
-      - /var/lib/woodpecker-cache/vue-cropperjs/buildx:/cache
     settings:
       dry_run: true
       repo: bluto-man/vue-cropperjs
       dockerfile: Dockerfile
       platforms: linux/amd64
-      cache_from: type=local,src=/cache
-      cache_to: type=local,dest=/cache,mode=max
-      # 手动触发时 CI_COMMIT_TAG 是空的，写死 tags 会传进去一个空标签导致插件报错。
-      # auto_tag 让插件自己按事件生成：tag 事件出 4、4.0、4.0.6，分支事件出 latest。
-      auto_tag: true
-    # 这里不用再写 when —— 顶层的全局 when 已经把事件筛过一遍了
+      tags:
+        - latest
+
+# ---- 关于依赖缓存（暂时摘掉，先排查 pipeline error）----
+# 插件每次都起一个干净的 docker daemon，layer 缓存一次都命不中，
+# Dockerfile 里两个阶段的 yarn install 每次都从零下载，这是构建慢的根源。
+# 解法是给 step 挂一个宿主机目录做 buildx 的 local cache：
+#
+#     volumes:
+#       - /var/lib/woodpecker-cache/vue-cropperjs/buildx:/cache
+#     settings:
+#       cache_from: type=local,src=/cache
+#       cache_to: type=local,dest=/cache,mode=max
+#
+# 但 Woodpecker 3.x 把仓库的 trusted 权限拆成了 Security / Volumes / Network
+# 三个独立开关，volumes 需要单独放行 Volumes。确认仓库设置里开了之后再加回来。
