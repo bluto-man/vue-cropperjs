@@ -2,6 +2,6 @@ steps:
   - name: deploy
     image: alpine
     commands:
-      - echo "手动部署"
+      - echo "手动部署----"
     when:
       - event: manual
