@@ -27,11 +27,22 @@ steps:
   # dry_run 让插件跳过 login 和 push，只验证镜像能不能构建出来。
   # 所以这里不需要 docker_username / docker_password 两个 secret。
   # 以后真要发布时，去掉 dry_run 并补上 username/password 即可。
+  #
+  # 缓存：插件每次都起一个干净的 docker daemon，layer 缓存一次都命不中，
+  # Dockerfile 里两个阶段的 yarn install 每次都从零下载，这是构建慢的根源之一。
+  # 挂一个宿主机目录当 buildx 的 local cache，只要 package.json / yarn.lock
+  # 没变，装依赖那两层就直接复用。mode=max 表示中间阶段的层也一起存。
+  # 这需要仓库设置里「值得信赖 → 卷」打开，否则流水线在解析阶段就报
+  # pipeline error（表现为 not started yet，容器根本不起）。
   - name: docker-build
     image: woodpeckerci/plugin-docker-buildx
     privileged: true
+    volumes:
+      - /var/lib/woodpecker-cache/vue-cropperjs/buildx:/cache
     settings:
       dry_run: true
+      cache_from: type=local,src=/cache
+      cache_to: type=local,dest=/cache,mode=max
       repo: bluto-man/vue-cropperjs
       dockerfile: Dockerfile
       # 不要写 platforms —— 这台 Woodpecker 的 agent 是 linux/arm64。
@@ -41,17 +52,3 @@ steps:
       # 以后真要发布 amd64 镜像，别在这里硬来，改用交叉编译或加一台 amd64 agent。
       tags:
         - latest
-
-# ---- 关于依赖缓存（暂时摘掉，先排查 pipeline error）----
-# 插件每次都起一个干净的 docker daemon，layer 缓存一次都命不中，
-# Dockerfile 里两个阶段的 yarn install 每次都从零下载，这是构建慢的根源。
-# 解法是给 step 挂一个宿主机目录做 buildx 的 local cache：
-#
-#     volumes:
-#       - /var/lib/woodpecker-cache/vue-cropperjs/buildx:/cache
-#     settings:
-#       cache_from: type=local,src=/cache
-#       cache_to: type=local,dest=/cache,mode=max
-#
-# 但 Woodpecker 3.x 把仓库的 trusted 权限拆成了 Security / Volumes / Network
-# 三个独立开关，volumes 需要单独放行 Volumes。确认仓库设置里开了之后再加回来。
