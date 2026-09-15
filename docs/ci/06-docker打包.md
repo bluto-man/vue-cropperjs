@@ -226,6 +226,6 @@ git add yarn.lock
 
 ## 已知问题
 
-- **`package.json` 的 version 和 tag 目前对不上**（前者 4.0.1，已有 tag v4.0.2），流水线不会因此报错，但发布前应手动对齐。想让 CI 强制校验，可以在 `release-build` 里加一行比对，不一致就 `exit 1`。
+- **`package.json` 的 version 要手动跟 tag 对齐**（已对齐到 4.0.4）。流水线不校验这个，对不上也不报错。想让 CI 强制校验，可以在 `release-build` 里加一行比对，不一致就 `exit 1`。
 - **镜像目前只构建不推送**（`dry_run: true`），Docker Hub 上不会出现任何东西。这是当前阶段有意为之，不是故障。
 - **`privileged` 依赖仓库的 trusted 标记**，没开的话 `docker-build` 必挂。这个改不了就只能先把该步骤注释掉，留前两步验证 tag 触发。
