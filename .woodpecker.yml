@@ -27,21 +27,26 @@ steps:
     when:
       - event: tag
 
-  # ---- 打 Docker 镜像并推送：同样只在 tag 时执行 ----
+  # ---- 打 Docker 镜像：同样只在 tag 时执行，只构建不推送 ----
   # 这个 step 不写 commands，而是用官方插件。插件本身也是个容器，
   # settings 下的字段会以 PLUGIN_XXX 环境变量传给它。
-  - name: docker-publish
+  #
+  # privileged 是必须的：插件内部要自己起一个 docker daemon 才能 buildx，
+  # 非特权容器起不来。对应地，仓库需要在 Woodpecker 里被标记为 trusted。
+  #
+  # dry_run 让插件跳过 login 和 push，只验证镜像能不能构建出来。
+  # 所以这里不需要 docker_username / docker_password 两个 secret。
+  # 以后真要发布时，去掉 dry_run 并补上 username/password 即可。
+  - name: docker-build
     image: woodpeckerci/plugin-docker-buildx
+    privileged: true
     settings:
+      dry_run: true
       repo: bluto-man/vue-cropperjs
       dockerfile: Dockerfile
       platforms: linux/amd64
       tags:
         - ${CI_COMMIT_TAG}
         - latest
-      username:
-        from_secret: docker_username
-      password:
-        from_secret: docker_password
     when:
       - event: tag
