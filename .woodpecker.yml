@@ -1,7 +1,8 @@
 steps:
-  - name: deploy
+  - name: build
     image: alpine
     commands:
-      - echo "手动部署----"
+      - echo "开始构建"
     when:
-      - event: manual
+      - event: push
+        branch: master
