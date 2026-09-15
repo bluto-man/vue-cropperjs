@@ -4,5 +4,4 @@ steps:
     commands:
       - echo "-----开始构建---"
     when:
-      - event: push
-        branch: master
+      - event: [push, manual, pull_request]
