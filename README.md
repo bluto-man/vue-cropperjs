@@ -6,6 +6,8 @@ A Vue wrapper component for [cropperjs](https://github.com/fengyuanchen/cropperj
 
 ## Demo
 
+
+
 Checkout here **[agontuk.github.io/vue-cropperjs](https://agontuk.github.io/vue-cropperjs/)**
 
 ## Installation
