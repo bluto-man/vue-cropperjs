@@ -34,7 +34,11 @@ steps:
       dry_run: true
       repo: bluto-man/vue-cropperjs
       dockerfile: Dockerfile
-      platforms: linux/amd64
+      # 不要写 platforms —— 这台 Woodpecker 的 agent 是 linux/arm64。
+      # 指定 linux/amd64 会让 buildx 用 QEMU 模拟 x86 来跑 yarn install 和
+      # webpack 打包，每条指令都要翻译，速度掉一个数量级（十几分钟起步）。
+      # 不写就按 agent 原生架构构建，快得多。
+      # 以后真要发布 amd64 镜像，别在这里硬来，改用交叉编译或加一台 amd64 agent。
       tags:
         - latest
 
