@@ -4,30 +4,14 @@
 #   工作目录 —— 仓库代码克隆到 /woodpecker/src/... 并挂载进每个容器，
 #               所以上一个 step 产生的文件，下一个 step 能直接看到
 #   容器退出码非 0 即判定失败，后续 step 不再执行
+#
+# 构建逻辑全部收在 Dockerfile 里，这里不再单独跑一遍 yarn install / yarn build。
+# 之前是 CI step 编一次、Dockerfile 阶段 1 又原样编一次，白跑一遍；
+# 而且 .dockerignore 排除了 dist，Dockerfile 也看不到 CI 的产物，想复用都复用不了。
+# 现在只留 docker-build 一个入口，好处是本地 docker build 和 CI 跑的是同一套逻辑。
 
 steps:
-  # ---- 默认构建：push / PR / 手动触发都走这里 ----
-  - name: build
-    image: node:16-alpine
-    commands:
-      - yarn install --frozen-lockfile
-      - yarn build
-      - ls -lh dist/
-    when:
-      - event: manual
-
-  # ---- tag 构建：打了版本 tag 才跑，产出正式 dist ----
-  - name: release-build
-    image: node:16-alpine
-    commands:
-      - echo "开始发布 ${CI_COMMIT_TAG}"
-      - yarn install --frozen-lockfile
-      - yarn build
-      - ls -lh dist/
-    when:
-      - event: tag
-
-  # ---- 打 Docker 镜像：同样只在 tag 时执行，只构建不推送 ----
+  # ---- 打 Docker 镜像：只构建不推送 ----
   # 这个 step 不写 commands，而是用官方插件。插件本身也是个容器，
   # settings 下的字段会以 PLUGIN_XXX 环境变量传给它。
   #
@@ -37,16 +21,26 @@ steps:
   # dry_run 让插件跳过 login 和 push，只验证镜像能不能构建出来。
   # 所以这里不需要 docker_username / docker_password 两个 secret。
   # 以后真要发布时，去掉 dry_run 并补上 username/password 即可。
+  #
+  # 缓存：插件每次都起一个干净的 docker daemon，layer 缓存本来一次都命不中，
+  # 两个阶段的 yarn install 每次从零下载。cache_from / cache_to 把缓存落到
+  # 宿主机目录，只要 package.json / yarn.lock 没变，装依赖那两层就直接复用，
+  # 只有改了源码的那几层会重跑。mode=max 表示中间阶段的层也一起存。
+  # volumes 只对 trusted 仓库生效——本仓库因为 privileged 已经是 trusted 了。
   - name: docker-build
     image: woodpeckerci/plugin-docker-buildx
     privileged: true
+    volumes:
+      - /var/lib/woodpecker-cache/vue-cropperjs/buildx:/cache
     settings:
       dry_run: true
       repo: bluto-man/vue-cropperjs
       dockerfile: Dockerfile
       platforms: linux/amd64
-      tags:
-        - ${CI_COMMIT_TAG}
-        - latest
+      cache_from: type=local,src=/cache
+      cache_to: type=local,dest=/cache,mode=max
+      # 手动触发时 CI_COMMIT_TAG 是空的，写死 tags 会传进去一个空标签导致插件报错。
+      # auto_tag 让插件自己按事件生成：tag 事件出 4、4.0、4.0.6，分支事件出 latest。
+      auto_tag: true
     when:
-      - event: tag
+      - event: [manual, tag]
