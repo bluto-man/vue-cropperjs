@@ -10,6 +10,14 @@
 # 而且 .dockerignore 排除了 dist，Dockerfile 也看不到 CI 的产物，想复用都复用不了。
 # 现在只留 docker-build 一个入口，好处是本地 docker build 和 CI 跑的是同一套逻辑。
 
+# 顶层 when 是整条流水线的开关，和 step 里的 when 不是一回事：
+#   写在这里     —— 事件不匹配时整条流水线标记为 skipped（灰色，不执行）
+#   只写在 step  —— 流水线照样创建，但没有一个 step 能跑，Woodpecker 判定
+#                   为无效配置，直接报 pipeline error
+# 之前普通 push 到 master 会红一条 error，就是因为只在 step 上写了 when。
+when:
+  - event: [manual, tag]
+
 steps:
   # ---- 打 Docker 镜像：只构建不推送 ----
   # 这个 step 不写 commands，而是用官方插件。插件本身也是个容器，
@@ -42,5 +50,4 @@ steps:
       # 手动触发时 CI_COMMIT_TAG 是空的，写死 tags 会传进去一个空标签导致插件报错。
       # auto_tag 让插件自己按事件生成：tag 事件出 4、4.0、4.0.6，分支事件出 latest。
       auto_tag: true
-    when:
-      - event: [manual, tag]
+    # 这里不用再写 when —— 顶层的全局 when 已经把事件筛过一遍了
