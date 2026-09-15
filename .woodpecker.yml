@@ -2,7 +2,7 @@ steps:
   - name: build
     image: alpine
     commands:
-      - echo "开始构建---"
+      - echo "-----开始构建---"
     when:
       - event: push
         branch: master
