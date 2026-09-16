@@ -42,10 +42,72 @@ steps:
       tags:
         - latest
 
-# ---- 关于依赖缓存（暂时摘掉，先排查 pipeline error）----
-# 插件每次都起一个干净的 docker daemon，layer 缓存一次都命不中，
-# Dockerfile 里两个阶段的 yarn install 每次都从零下载，这是构建慢的根源。
-# 解法是给 step 挂一个宿主机目录做 buildx 的 local cache：
+
+# ===========================================================================
+# 【待启用】打 tag 时推送到私有 registry
+# ===========================================================================
+#
+# 下面这段填完占位符、去掉注释符，替换掉上面的 docker-build 就能用。
+# 需要你补的只有两处：<REGISTRY_HOST> 和 Woodpecker 里的两条 secret。
+#
+# --- 第 1 步：在 Woodpecker 里加 secret ---
+#
+# 仓库设置 → 秘密（Secrets）→ 添加两条：
+#     名称 registry_username   值：登录私有 registry 的用户名
+#     名称 registry_password   值：密码或 access token
+#
+# 「事件」那一栏只勾 tag。千万别勾 pull_request —— 勾了的话任何人开一个
+# PR、在 .woodpecker.yml 里写一行 echo，就能把你的密码打印到公开日志里。
+#
+# --- 第 2 步：替换 docker-build ---
+#
+#   - name: docker-push
+#     image: woodpeckerci/plugin-docker-buildx
+#     privileged: true
+#     settings:
+#       # registry 地址，不要带 https:// 前缀。例：registry.lan:5000
+#       registry: <REGISTRY_HOST>
+#       # 完整镜像名必须以 registry 地址开头，否则插件会推去 docker.io
+#       repo: <REGISTRY_HOST>/bluto-man/vue-cropperjs
+#       dockerfile: Dockerfile
+#       username:
+#         from_secret: registry_username
+#       password:
+#         from_secret: registry_password
+#       tags:
+#         - ${CI_COMMIT_TAG}
+#         - latest
+#       # registry 是 http 而非 https 的话，取消下面这行注释
+#       # insecure: true
+#     when:
+#       - event: tag
+#
+# 注意这里 step 级别又写了 when: event: tag。顶层的 when 已经把范围
+# 限定到 [manual, tag] 了，但这一步必须再收一道：${CI_COMMIT_TAG} 在
+# manual 触发时是空的，会生成一个空标签让插件直接报错。
+#
+# 还要把 docker-build 里的 dry_run: true 删掉，留着就不会真的推。
+# 建议保留两个 step：manual 跑 dry_run 验证构建，tag 才真推。
+#
+# --- 架构：这条最容易踩 ---
+#
+# 当前 agent 是 MacBook（linux/arm64），构建出来的是 arm64 镜像。
+# 接收镜像的那台机器如果是普通 x86 服务器，拉下去会直接
+# exec format error 起不来。
+#
+# 确认方法，在那台机器上跑：uname -m
+#     aarch64 / arm64  → 架构一致，不用管
+#     x86_64           → 不一致，得处理，三个办法：
+#         a. 在那台 x86 机器上也跑一个 woodpecker-agent，让它去构建（最实在）
+#         b. settings 加回 platforms: linux/amd64，靠 QEMU 模拟
+#            —— 就是之前十几分钟跑不完的元凶，除非你能接受
+#         c. platforms: linux/amd64,linux/arm64 出多架构镜像，
+#            时间是 b 再翻倍，但一次解决所有目标机器
+#
+# --- 依赖缓存（等镜像拉取问题解决后再说）---
+#
+# 插件每次起的是干净的 docker daemon，layer 缓存一次都命不中，
+# Dockerfile 两个阶段的 yarn install 每次从零下载。解法是挂宿主机目录：
 #
 #     volumes:
 #       - /var/lib/woodpecker-cache/vue-cropperjs/buildx:/cache
@@ -53,5 +115,4 @@ steps:
 #       cache_from: type=local,src=/cache
 #       cache_to: type=local,dest=/cache,mode=max
 #
-# 但 Woodpecker 3.x 把仓库的 trusted 权限拆成了 Security / Volumes / Network
-# 三个独立开关，volumes 需要单独放行 Volumes。确认仓库设置里开了之后再加回来。
+# 仓库设置里「值得信赖 → 卷」已经打开了，加回来就能用。
