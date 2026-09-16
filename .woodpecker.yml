@@ -8,7 +8,10 @@
 # 构建逻辑全部收在 Dockerfile 里，这里不再单独跑一遍 yarn install / yarn build。
 # 之前是 CI step 编一次、Dockerfile 阶段 1 又原样编一次，白跑一遍；
 # 而且 .dockerignore 排除了 dist，Dockerfile 也看不到 CI 的产物，想复用都复用不了。
-# 现在只留 docker-build 一个入口，好处是本地 docker build 和 CI 跑的是同一套逻辑。
+# 只留 docker 一个入口，好处是本地 docker build 和 CI 跑的是同一套逻辑。
+#
+# ⚠️ 启用推送前必须先填两个地方，见文件末尾的「待填清单」。
+#    在填完之前，打 tag 会让 docker-push 这一步失败。
 
 # 顶层 when 是整条流水线的开关，管的是「这条流水线该不该存在」；
 # 写在 step 里的 when 只管「这个 step 跑不跑」，流水线本身照样成立。
@@ -17,16 +20,13 @@ when:
   - event: [manual, tag]
 
 steps:
-  # ---- 打 Docker 镜像：只构建不推送 ----
-  # 这个 step 不写 commands，而是用官方插件。插件本身也是个容器，
-  # settings 下的字段会以 PLUGIN_XXX 环境变量传给它。
+  # ---- 手动触发：只验证能不能构建出来，不推送 ----
+  # 改了 Dockerfile 或依赖之后先点 Run pipeline 跑这个，确认没问题再打 tag。
   #
   # privileged 是必须的：插件内部要自己起一个 docker daemon 才能 buildx，
   # 非特权容器起不来。对应地，仓库需要在 Woodpecker 里被标记为 trusted。
   #
-  # dry_run 让插件跳过 login 和 push，只验证镜像能不能构建出来。
-  # 所以这里不需要 docker_username / docker_password 两个 secret。
-  # 以后真要发布时，去掉 dry_run 并补上 username/password 即可。
+  # dry_run 让插件跳过 login 和 push，所以这一步不需要任何凭据。
   - name: docker-build
     image: woodpeckerci/plugin-docker-buildx
     privileged: true
@@ -34,80 +34,77 @@ steps:
       dry_run: true
       repo: bluto-man/vue-cropperjs
       dockerfile: Dockerfile
-      # 不要写 platforms —— 这台 Woodpecker 的 agent 是 linux/arm64。
+      # 不要写 platforms —— 当前 agent 是 linux/arm64（MacBook）。
       # 指定 linux/amd64 会让 buildx 用 QEMU 模拟 x86 来跑 yarn install 和
       # webpack 打包，每条指令都要翻译，速度掉一个数量级（十几分钟起步）。
-      # 不写就按 agent 原生架构构建，快得多。
-      # 以后真要发布 amd64 镜像，别在这里硬来，改用交叉编译或加一台 amd64 agent。
       tags:
         - latest
+    when:
+      - event: manual
 
+  # ---- 打 tag：构建并推送到私有 registry ----
+  # username / password 走 Woodpecker 的 secret，不要写进这个文件。
+  # from_secret 里的名字要和仓库设置 → 秘密 里创建的名称完全一致。
+  - name: docker-push
+    image: woodpeckerci/plugin-docker-buildx
+    privileged: true
+    settings:
+      # ↓↓↓ 待填 1：registry 地址，不带 https:// 前缀，例：registry.lan:5000
+      registry: REGISTRY_HOST
+      # ↓↓↓ 待填 2：完整镜像名必须以 registry 地址开头，
+      #             否则插件会把镜像推去 docker.io
+      repo: REGISTRY_HOST/bluto-man/vue-cropperjs
+      dockerfile: Dockerfile
+      username:
+        from_secret: registry_username
+      password:
+        from_secret: registry_password
+      # registry 走 http 而不是 https 的话，取消下面这行注释
+      # insecure: true
+      tags:
+        - ${CI_COMMIT_TAG}
+        - latest
+    # 这里必须再收一道 when：顶层已经限定 [manual, tag]，但 manual 触发时
+    # ${CI_COMMIT_TAG} 是空的，会生成一个空标签让插件直接报错。
+    when:
+      - event: tag
 
 # ===========================================================================
-# 【待启用】打 tag 时推送到私有 registry
+# 待填清单
 # ===========================================================================
 #
-# 下面这段填完占位符、去掉注释符，替换掉上面的 docker-build 就能用。
-# 需要你补的只有两处：<REGISTRY_HOST> 和 Woodpecker 里的两条 secret。
+# 1. 上面 docker-push 里两处 REGISTRY_HOST，换成那台镜像机器的地址。
 #
-# --- 第 1 步：在 Woodpecker 里加 secret ---
+# 2. Woodpecker 仓库设置 → 秘密（Secrets），添加两条：
+#        registry_username   登录 registry 的用户名
+#        registry_password   密码或 access token
+#    「事件」那栏只勾 tag。别勾 pull_request —— 勾了之后任何人开个 PR、
+#    在这个文件里加一行 echo，就能把密码打印进公开日志。
 #
-# 仓库设置 → 秘密（Secrets）→ 添加两条：
-#     名称 registry_username   值：登录私有 registry 的用户名
-#     名称 registry_password   值：密码或 access token
+# ===========================================================================
+# 架构：最容易踩的一条
+# ===========================================================================
 #
-# 「事件」那一栏只勾 tag。千万别勾 pull_request —— 勾了的话任何人开一个
-# PR、在 .woodpecker.yml 里写一行 echo，就能把你的密码打印到公开日志里。
+# 当前 agent 是 MacBook（linux/arm64），构建产物是 arm64 镜像。
+# 接收镜像的机器如果是普通 x86 服务器，拉下去会直接 exec format error。
 #
-# --- 第 2 步：替换 docker-build ---
-#
-#   - name: docker-push
-#     image: woodpeckerci/plugin-docker-buildx
-#     privileged: true
-#     settings:
-#       # registry 地址，不要带 https:// 前缀。例：registry.lan:5000
-#       registry: <REGISTRY_HOST>
-#       # 完整镜像名必须以 registry 地址开头，否则插件会推去 docker.io
-#       repo: <REGISTRY_HOST>/bluto-man/vue-cropperjs
-#       dockerfile: Dockerfile
-#       username:
-#         from_secret: registry_username
-#       password:
-#         from_secret: registry_password
-#       tags:
-#         - ${CI_COMMIT_TAG}
-#         - latest
-#       # registry 是 http 而非 https 的话，取消下面这行注释
-#       # insecure: true
-#     when:
-#       - event: tag
-#
-# 注意这里 step 级别又写了 when: event: tag。顶层的 when 已经把范围
-# 限定到 [manual, tag] 了，但这一步必须再收一道：${CI_COMMIT_TAG} 在
-# manual 触发时是空的，会生成一个空标签让插件直接报错。
-#
-# 还要把 docker-build 里的 dry_run: true 删掉，留着就不会真的推。
-# 建议保留两个 step：manual 跑 dry_run 验证构建，tag 才真推。
-#
-# --- 架构：这条最容易踩 ---
-#
-# 当前 agent 是 MacBook（linux/arm64），构建出来的是 arm64 镜像。
-# 接收镜像的那台机器如果是普通 x86 服务器，拉下去会直接
-# exec format error 起不来。
-#
-# 确认方法，在那台机器上跑：uname -m
+# 在那台机器上跑 uname -m 确认：
 #     aarch64 / arm64  → 架构一致，不用管
-#     x86_64           → 不一致，得处理，三个办法：
-#         a. 在那台 x86 机器上也跑一个 woodpecker-agent，让它去构建（最实在）
-#         b. settings 加回 platforms: linux/amd64，靠 QEMU 模拟
-#            —— 就是之前十几分钟跑不完的元凶，除非你能接受
+#     x86_64           → 不一致，三个办法：
+#         a. 在那台 x86 机器上也跑一个 woodpecker-agent，让它去构建。
+#            最实在，顺带解决 MacBook 休眠导致流水线中断的问题。
+#         b. settings 里加 platforms: linux/amd64，靠 QEMU 模拟。
+#            就是之前十几分钟跑不完的元凶，除非能接受这个速度。
 #         c. platforms: linux/amd64,linux/arm64 出多架构镜像，
-#            时间是 b 再翻倍，但一次解决所有目标机器
+#            耗时是 b 再翻倍，但一次覆盖所有目标机器。
 #
-# --- 依赖缓存（等镜像拉取问题解决后再说）---
+# ===========================================================================
+# 依赖缓存（等镜像拉取问题解决后再加）
+# ===========================================================================
 #
 # 插件每次起的是干净的 docker daemon，layer 缓存一次都命不中，
-# Dockerfile 两个阶段的 yarn install 每次从零下载。解法是挂宿主机目录：
+# Dockerfile 两个阶段的 yarn install 每次从零下载。解法是挂宿主机目录，
+# 两个 step 都要加：
 #
 #     volumes:
 #       - /var/lib/woodpecker-cache/vue-cropperjs/buildx:/cache
@@ -115,4 +112,4 @@ steps:
 #       cache_from: type=local,src=/cache
 #       cache_to: type=local,dest=/cache,mode=max
 #
-# 仓库设置里「值得信赖 → 卷」已经打开了，加回来就能用。
+# 仓库设置里「值得信赖 → 卷」已经打开了，加回来就能生效。
